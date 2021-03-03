@@ -33,6 +33,7 @@ object OpaqueServer {
 class OpaqueServer(executionContext: ExecutionContext) { self =>
   private[this] var server: Server = null
   private[this] var spark: SparkSession = null
+  private[this] var 
 
   private def start(): Unit = {
 
