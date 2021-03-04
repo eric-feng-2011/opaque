@@ -19,7 +19,7 @@ package edu.berkeley.cs.rise.opaque
 
 import org.apache.spark.SparkContext
 import org.apache.spark.internal.Logging
-import java.nio.file.{Files, Paths}
+import java.nio.file.{Files, Path, Paths}
 
 import edu.berkeley.cs.rise.opaque.execution.SP
 
@@ -27,10 +27,12 @@ import edu.berkeley.cs.rise.opaque.execution.SP
 // that have not been attested yet
 
 object RA extends Logging {
+
+  private var numExecutors = 1
+
   def initRA(sc: SparkContext): Unit = {
 
     // All executors need to be initialized before attestation can occur
-    var numExecutors = 1
     if (!sc.isLocal) {
       numExecutors = sc.getConf.getInt("spark.executor.instances", -1)
       while (!sc.isLocal && sc.getExecutorMemoryStatus.size < numExecutors) {}
@@ -66,6 +68,17 @@ object RA extends Logging {
     }.collect.toMap
 
     // Runs on driver
+
+    // Save report(s) to file(s)
+    val opaqueHome = sys.env("OPAQUE_HOME")
+    var i = 0
+
+    for ((_, v) <- msg1s) {
+      val raReport = Files.createFile(Paths.get(opaqueHome, "tmp", "report", i.toString))
+      i += 1    
+      Files.write(raReport, v)
+    }
+
     val msg2s = msg1s.map{case (eid, msg1) => (eid, sp.ProcessEnclaveReport(msg1))}
 
     // Runs on executors
@@ -80,5 +93,9 @@ object RA extends Logging {
       if (!ret)
         throw new OpaqueException("Attestation failed")
     }
+  }
+
+  def grpcFinishAttestation() {
+    
   }
 }

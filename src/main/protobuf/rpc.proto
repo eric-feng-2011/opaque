@@ -16,12 +16,13 @@ message RARequest {
 
 message RAReply {
   bool success = 1;
-  bytes report = 2;
+  repeated bytes report = 2;
 }
 
 message KeyRequest {
   bool nonNull = 1;
-  bytes key = 2;
+  string name = 2;
+  repeated bytes key = 3;
 }
 
 message KeyReply {

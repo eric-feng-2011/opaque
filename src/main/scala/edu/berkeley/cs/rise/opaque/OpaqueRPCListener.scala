@@ -5,7 +5,9 @@ import java.util.logging.Logger
 import com.google.protobuf.ByteString
 
 import io.grpc.{Server, ServerBuilder}
-import java.io.{BufferedReader, BufferedWriter, InputStreamReader, OutputStreamWriter}
+import java.io.{File, BufferedReader, BufferedWriter, InputStreamReader, OutputStreamWriter}
+import java.nio.file.{Files, Path, Paths}
+import scala.reflect.io.Directory
 
 import rpc.Rpc
 import rpc.OpaqueRPCGrpc
@@ -36,6 +38,7 @@ class OpaqueRPCListener(executionContext: ExecutionContext) { self =>
   private[this] var spark: SparkSession = null
   private[this] var reader: BufferedReader = null
   private[this] var writer: BufferedWriter = null
+  private[this] var tempDir: Path = null
 
   // TODO: Currently hard-coded, but can make server generate random string for each query
   private[this] var magicString: String = "hello world"
@@ -48,17 +51,18 @@ class OpaqueRPCListener(executionContext: ExecutionContext) { self =>
     val spark_home = sys.env("SPARK_HOME")
     val spark_shell_bin = spark_home + "/" + "/bin/spark-shell"
     
-    // First argument should be jar file. Second argument should be spark cluster
+    // First argument should be jar file. Second argument should be spark cluster. Otherwise no arguments
     var opaque_jar: String = null
     var spark_master: String = null
+    var builder: ProcessBuilder = null
     if (args.length == 2) {
       opaque_jar = args(0)
       spark_master = args(1)
+      builder = new ProcessBuilder(spark_shell_bin, "--jars", opaque_jar, "--master", spark_master, 
+      "--conf", "spark.executor.instances=2");
+    } else {
+      builder = new ProcessBuilder(spark_shell_bin);
     }
-
-    // TODO: Make it so that the shell can run with multiple arguments
-    // Create process and obtain stream input and output buffers
-    val builder = new ProcessBuilder(spark_shell_bin, "--jars", opaque_jar, "--master", spark_master);
     builder.redirectErrorStream(true);
     val process = builder.start();
     val stdin = process.getOutputStream ();
@@ -67,6 +71,13 @@ class OpaqueRPCListener(executionContext: ExecutionContext) { self =>
     writer = new BufferedWriter(new OutputStreamWriter(stdin));
     
     // Import Opaque libraries and flush spark initialization
+    // Also create temp dir in opaque home to store enclave report and client keys
+
+    val opaque_home = sys.env("OPAQUE_HOME")
+    tempDir = Files.createDirectory(Paths.get(opaque_home, "tmp"))
+    val subReportDir = Files.createDirectory(tempDir.resolve("report"))
+    val subKeyDir = Files.createDirectory(tempDir.resolve("keys"))
+
     var methodChain = 
       """
         import edu.berkeley.cs.rise.opaque.implicits._
@@ -81,18 +92,12 @@ class OpaqueRPCListener(executionContext: ExecutionContext) { self =>
       println(line)
     }
 
-    // initialize SparkSession and ensure remote attestation works
-    // TODO: chnage to perform RA through the shell and file system
-    spark = SparkSession.builder()
-      .appName("QEDBenchmark")
-      .getOrCreate()
-    Utils.initSQLContext(spark.sqlContext)
-
     // Create rpc Server and make it listen
     server = ServerBuilder.forPort(OpaqueRPCListener.port).addService(new OpaqueRPCImpl()).build.start
     OpaqueRPCListener.logger.info("Server started, listening on " + OpaqueRPCListener.port)
     sys.addShutdownHook {
       System.err.println("*** shutting down gRPC server since JVM is shutting down")
+      new Directory(tempDir.toFile()).deleteRecursively()
       reader.close()
       writer.close()
       self.stop()
@@ -116,17 +121,17 @@ class OpaqueRPCListener(executionContext: ExecutionContext) { self =>
 
     override def relayGenerateReport(req: Rpc.RARequest, responseObserver: io.grpc.stub.StreamObserver[Rpc.RAReply]) = {
       
-      val (enclave, eid) = Utils.initEnclave()
-      val msg1 = enclave.GenerateReport(eid)
+      val report = tempDir.resolve("report")
+      val reportDirStream = Files.newDirectoryStream(report).iterator()
 
-      val byteString: ByteString = ByteString.copyFrom(msg1)
-
-      val reply = Rpc.RAReply.newBuilder()
-	.setReport(byteString)
-	.setSuccess(true)
-	.build();
-
-      responseObserver.onNext(reply);
+      val replyBuilder = Rpc.RAReply.newBuilder().setSuccess(true)
+      while (reportDirStream.hasNext()) {
+        val file = reportDirStream.next()
+        val byteString: ByteString = ByteString.copyFrom(Files.readAllBytes(file))
+        replyBuilder.addReport(byteString)
+      }
+      
+      responseObserver.onNext(replyBuilder.build());
       responseObserver.onCompleted();
     }
 
@@ -161,12 +166,42 @@ class OpaqueRPCListener(executionContext: ExecutionContext) { self =>
     }
 
     override def relayFinishAttestation(req: Rpc.KeyRequest, responseObserver: io.grpc.stub.StreamObserver[Rpc.KeyReply]) = {
+
+      val replyBuilder = Rpc.KeyReply.newBuilder()
+
       if (req.getNonNull()) {
 
-	// Obtain key from message and store
-	val (enclave, eid) = Utils.initEnclave()
-	enclave.FinishAttestation(eid, req.getKey().toByteArray())
+        // Use name to create folder for client keys
+        val name = req.getName()
+        val keyDirectory = Files.createDirectory(tempDir.resolve("keys").resolve(name))
+        
+        // Create files for keys
+        val keyNum = req.getKeyCount()
+        
+        var a = 0
+        for (a <- 0 to keyNum - 1) {
+          val msg = req.getKey(a).toByteArray()
+          
+          val keyFile = Files.createFile(Paths.get(keyDirectory.toString(), a.toString))
+          Files.write(keyFile, msg)     
+        }
 
+        // Send command to shell to read key files and finish attestation
+        // TODO: Complete this section
+        var query = 
+          """
+          """
+
+        writer.write(query)
+        writer.flush()
+
+        var line: String = ""
+        val replyBuilder = Rpc.QueryReply.newBuilder().setSuccess(true)
+        while ((line = reader.readLine ()) != null && ! line.trim().equals(magicString)) {
+        }
+              
+
+	// Obtain key from message and store
         val reply = Rpc.KeyReply.newBuilder()
 	  .setSuccess(true)
 	  .build();
@@ -174,7 +209,7 @@ class OpaqueRPCListener(executionContext: ExecutionContext) { self =>
         responseObserver.onCompleted();
       } else {
 	println("Failed to receive data or client did not confirm")
-	val reply = Rpc.KeyReply.newBuilder()
+	val reply = replyBuilder
           .setSuccess(false) 
           .build();
 	responseObserver.onNext(reply);

@@ -50,12 +50,8 @@ object OpaqueClient {
 
   def main(args: Array[String]): Unit = {
     val client = OpaqueClient("localhost", 50051)
-    try {
-      val user = args.headOption.getOrElse("world")
-//      client.getRA(user)
-//      client.sendTestQuery()
-    } finally {
-    }
+
+    val user = args.headOption.getOrElse("world")
 
     sys.addShutdownHook {
       System.err.println("*** shutting down gRPC client")
@@ -63,6 +59,7 @@ object OpaqueClient {
       System.err.println("*** client shut down")
     }
 
+//    client.getRA(user)
     shell(client)
   }
 }
@@ -83,18 +80,26 @@ class OpaqueClient private(
 	.newBuilder()
 	.setName(name)
 	.build()
+
+    // Building the key response
+    val request2Builder = Rpc.KeyRequest.newBuilder()
+
     try {
       val response = blockingStub.relayGenerateReport(request)
       if (response.getSuccess()) {
-	// Verify the RA report is correct and return the client key if so
-        val msg2 = serviceProvider.ProcessEnclaveReport(response.getReport().toByteArray())
-        val byteString: ByteString = ByteString.copyFrom(msg2)
+
+	// Verify the RA report(s) are correct and return the client key if so
+        val reportNum = response.getReportCount()
+        
+        var a = 0
+        for (a <- 0 to reportNum - 1) {
+          val msg = serviceProvider.ProcessEnclaveReport(response.getReport(a).toByteArray())
+          val byteString: ByteString = ByteString.copyFrom(msg)
+          request2Builder.addKey(byteString)
+        }
 
 	// Building the key response
-        val request2 = Rpc.KeyRequest.newBuilder()
-	  .setNonNull(true)
-	  .setKey(byteString)
-	  .build()
+        val request2 = request2Builder.setNonNull(true).build()
         val response2 = blockingStub.relayFinishAttestation(request2)
         if (response2.getSuccess()) {
           println("Attestation passes")
@@ -102,8 +107,12 @@ class OpaqueClient private(
       }
     }
     catch {
-      case e: StatusRuntimeException =>
+      case e: StatusRuntimeException => {
         logger.log(Level.WARNING, "RPC failed: {0}", e.getStatus)
+
+        val request2 = request2Builder.setNonNull(false).build()
+        val response2 = blockingStub.relayFinishAttestation(request2)
+      }
     }
   }
 

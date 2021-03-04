@@ -306,6 +306,7 @@ object Utils extends Logging {
     sqlContext.experimental.extraStrategies =
       (Seq(OpaqueOperators) ++
         sqlContext.experimental.extraStrategies)
+    println("Inside Utils")
     RA.initRA(sqlContext.sparkContext)
   }
 
