@@ -26,6 +26,12 @@ libraryDependencies += "org.apache.tomcat" % "annotations-api" % "6.0.53"
 
 // End Java gRPC dependencies
 
+// Begin shell dependencies
+
+connectInput in run := true
+
+// End shell dependencies
+
 val flatbuffersVersion = "1.7.0"
 
 concurrentRestrictions in Global := Seq(
@@ -278,7 +284,7 @@ buildGrpcTask := {
       "protoc",
       "--java_out=" + javaOutDir,
       "--proto_path=" + protoSourceDir,
-      protoSourceDir + "/ra.proto"),
+      protoSourceDir + "/rpc.proto"),
       baseDirectory.value).!
   if (genPB != 0) sys.error("Protocol Buffer generation failed.")
 
@@ -288,7 +294,7 @@ buildGrpcTask := {
       "--plugin=protoc-gen-grpc-java=./protoc-gen-grpc-java.exe",
       "--grpc-java_out=" + javaOutDir,
       "--proto_path=" + protoSourceDir,
-      protoSourceDir + "/ra.proto"),
+      protoSourceDir + "/rpc.proto"),
       baseDirectory.value).!
   if (genGrpc != 0) sys.error("gRPC generation failed.")
 
