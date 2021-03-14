@@ -16,11 +16,11 @@ message RARequest {
 
 message RAReply {
   bool success = 1;
-  repeated bytes report = 2;
+  string report = 2;
 }
 
 message KeyRequest {
-  bool nonNull = 1;
+  bool success = 1;
   string name = 2;
   repeated bytes key = 3;
 }
@@ -30,13 +30,10 @@ message KeyReply {
 }
 
 message QueryRequest {
-  bool encryptedCreate = 1;
-  string sqlQuery = 2;
+  string query = 2;
 }
 
 message QueryReply {
   bool success = 1;
-
-  // The data is returned in rows as strings
-  repeated string data = 2;
+  string data = 2;
 }
